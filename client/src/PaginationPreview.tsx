@@ -87,7 +87,8 @@ export default function PaginationPreview({
     requestAnimationFrame(() => {
       const mathElements = containerRef.current?.querySelectorAll('span[data-formula]')
       mathElements?.forEach(element => {
-        const formula = element.dataset.formula
+        const htmlElement = element as HTMLElement
+        const formula = htmlElement.dataset.formula
         if (formula && !element.querySelector('.katex')) {
           try {
             katex.render(formula, element as HTMLElement, {

@@ -380,10 +380,10 @@ class PostgresPersistence {
   /**
    * Restore from a named snapshot
    */
-  async restoreSnapshot(roomName, snapshotId) {
+  async restoreSnapshot(roomName, snapshotId, createdBy = 'system') {
     try {
       const result = await db.query(
-        'SELECT state_data FROM document_snapshots WHERE id = $1 AND room_name = $2',
+        'SELECT state_data, snapshot_name FROM document_snapshots WHERE id = $1 AND room_name = $2',
         [snapshotId, roomName]
       )
       
@@ -392,17 +392,22 @@ class PostgresPersistence {
       }
       
       const state = new Uint8Array(result.rows[0].state_data)
+      const snapshotName = result.rows[0].snapshot_name
       
       // Clear cache and apply snapshot
       this.clearDocumentCache(roomName)
       
-      // Delete all existing updates
-      await db.query('DELETE FROM yjs_updates WHERE room_name = $1', [roomName])
-      
-      // Store the snapshot as the first update
+      // Store the snapshot as a new update (preserve history)
       await this.storeUpdate(roomName, state)
       
-      console.log(`Restored ${roomName} from snapshot ${snapshotId}`)
+      // Also create a new version entry to track this restore operation
+      await db.query(
+        `INSERT INTO document_versions (room_name, update_data, data_size, created_by, is_current)
+         VALUES ($1, $2, $3, $4, true)`,
+        [roomName, Buffer.from(state), state.length, createdBy]
+      )
+      
+      console.log(`Restored ${roomName} from snapshot ${snapshotId} (${snapshotName})`)
       return true
     } catch (err) {
       console.error(`Error restoring snapshot for ${roomName}:`, err)

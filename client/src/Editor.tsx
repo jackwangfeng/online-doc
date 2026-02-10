@@ -6,6 +6,8 @@ import { TableRow } from '@tiptap/extension-table-row'
 import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import Highlight from '@tiptap/extension-highlight'
+import Image from '@tiptap/extension-image'
+import Link from '@tiptap/extension-link'
 import * as Y from 'yjs'
 import { WebsocketProvider } from 'y-websocket'
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -16,8 +18,11 @@ import {
   Table as TableIcon, Plus, Trash2,
   MessageSquare, FunctionSquare, X, Check,
   Printer, History, RotateCcw, Save, FileCode, FileUp,
+  Code2, Image as ImageIcon, Link as LinkIcon
 } from 'lucide-react'
 import { marked } from 'marked'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/atom-one-dark.css'
 import './Editor.css'
 
 interface EditorProps {
@@ -89,7 +94,6 @@ interface PrintPreviewProps {
 
 function PrintPreview({ editor }: PrintPreviewProps) {
   const [pages, setPages] = useState<string[]>([''])
-  const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!editor) return
@@ -256,7 +260,7 @@ export default function Editor({ roomId, userName }: EditorProps) {
     // 监听评论变化
     const handleCommentsChange = () => {
       const commentsArray: Comment[] = []
-      commentsMap.forEach((value, key) => {
+      commentsMap.forEach((value) => {
         commentsArray.push(value as Comment)
       })
       // 按时间排序
@@ -276,7 +280,11 @@ export default function Editor({ roomId, userName }: EditorProps) {
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
-        history: false,
+        codeBlock: {
+          HTMLAttributes: {
+            class: 'hljs',
+          },
+        },
       }),
       Collaboration.configure({
         document: ydoc,
@@ -291,10 +299,26 @@ export default function Editor({ roomId, userName }: EditorProps) {
         multicolor: true,
       }),
       MathFormula,
+      Image.configure({
+        allowBase64: true,
+      }),
+      Link.configure({
+        openOnClick: false,
+      }),
     ],
     onSelectionUpdate: ({ editor }) => {
       const { from, to } = editor.state.selection
       setHasSelection(from !== to)
+    },
+    onUpdate: ({ editor }) => {
+      // Highlight code blocks after update
+      const codeBlocks = editor.view.dom.querySelectorAll('pre code')
+      codeBlocks.forEach((block) => {
+        const language = block.parentElement?.getAttribute('data-language')
+        if (language && language !== 'plaintext') {
+          hljs.highlightElement(block as HTMLElement)
+        }
+      })
     },
   }, [ydoc, roomId, userName])
 
@@ -433,7 +457,11 @@ export default function Editor({ roomId, userName }: EditorProps) {
     if (!confirm('Are you sure you want to restore this snapshot?')) return
     try {
       const response = await fetch(`http://localhost:3000/versions/${roomId}/restore/${snapshotId}`, {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ createdBy: userName })
       })
       if (response.ok) {
         alert('Restore successful! The page will refresh to show the restored version.')
@@ -443,7 +471,7 @@ export default function Editor({ roomId, userName }: EditorProps) {
     } catch (err) {
       console.error('Error restoring snapshot:', err)
     }
-  }, [roomId])
+  }, [roomId, userName])
 
   useEffect(() => {
     if (showVersionHistory) {
@@ -485,9 +513,26 @@ export default function Editor({ roomId, userName }: EditorProps) {
             <ToolbarButton
               onClick={() => editor.chain().focus().toggleCode().run()}
               isActive={editor.isActive('code')}
-              title="Code"
+              title="Inline Code"
             >
               <Code size={18} />
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => {
+                const languages = ['javascript', 'typescript', 'python', 'java', 'cpp', 'html', 'css', 'sql', 'bash', 'json', 'yaml', 'markdown', 'plaintext']
+                const language = window.prompt(
+                  `Select language:\n${languages.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\nEnter number or name:`,
+                  '1'
+                )
+                if (language) {
+                  const selectedLang = languages[parseInt(language) - 1] || language
+                  editor.chain().focus().toggleCodeBlock({ language: selectedLang }).run()
+                }
+              }}
+              isActive={editor.isActive('codeBlock')}
+              title="Code Block"
+            >
+              <Code2 size={18} />
             </ToolbarButton>
             <ToolbarButton
               onClick={() => editor.chain().focus().toggleHighlight().run()}
@@ -495,6 +540,34 @@ export default function Editor({ roomId, userName }: EditorProps) {
               title="Highlight"
             >
               <span style={{ fontSize: 14, fontWeight: 'bold' }}>H</span>
+            </ToolbarButton>
+          </div>
+
+          <Divider />
+
+          <div className="toolbar-group">
+            <ToolbarButton
+              onClick={() => {
+                const url = window.prompt('Enter image URL:', 'https://')
+                if (url) {
+                  editor.chain().focus().setImage({ src: url }).run()
+                }
+              }}
+              title="Insert Image"
+            >
+              <ImageIcon size={18} />
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => {
+                const url = window.prompt('Enter link URL:', 'https://')
+                if (url) {
+                  editor.chain().focus().setLink({ href: url }).run()
+                }
+              }}
+              isActive={editor.isActive('link')}
+              title="Insert Link"
+            >
+              <LinkIcon size={18} />
             </ToolbarButton>
           </div>
 

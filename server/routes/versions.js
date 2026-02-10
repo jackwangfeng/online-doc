@@ -116,8 +116,9 @@ router.get('/:roomName/snapshots', async (req, res) => {
 router.post('/:roomName/restore/:snapshotId', async (req, res) => {
   try {
     const { roomName, snapshotId } = req.params
+    const createdBy = req.body.createdBy || req.user?.username || 'system'
 
-    await persistence.restoreSnapshot(roomName, parseInt(snapshotId))
+    await persistence.restoreSnapshot(roomName, parseInt(snapshotId), createdBy)
 
     res.json({
       message: 'Restore successful',
