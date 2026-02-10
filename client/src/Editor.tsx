@@ -15,8 +15,9 @@ import {
   List, ListOrdered, Minus,
   Table as TableIcon, Plus, Trash2,
   MessageSquare, FunctionSquare, X, Check,
-  Printer, History, RotateCcw, Save,
+  Printer, History, RotateCcw, Save, FileCode, FileUp,
 } from 'lucide-react'
+import { marked } from 'marked'
 import './Editor.css'
 
 interface EditorProps {
@@ -622,6 +623,40 @@ export default function Editor({ roomId, userName }: EditorProps) {
               title="Version History"
             >
               <History size={18} />
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => {
+                const input = document.createElement('input')
+                input.type = 'file'
+                input.accept = '.md,.markdown,.txt'
+                input.onchange = async (e) => {
+                  const file = (e.target as HTMLInputElement).files?.[0]
+                  if (file) {
+                    const text = await file.text()
+                    const html = marked(text)
+                    editor.chain().focus().setContent(html).run()
+                  }
+                }
+                input.click()
+              }}
+              title="Import Markdown"
+            >
+              <FileUp size={18} />
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => {
+                const markdown = editor.getText()
+                const blob = new Blob([markdown], { type: 'text/markdown' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `document-${roomId}.md`
+                a.click()
+                URL.revokeObjectURL(url)
+              }}
+              title="Export Markdown"
+            >
+              <FileCode size={18} />
             </ToolbarButton>
           </div>
 
