@@ -1,0 +1,129 @@
+.table-of-contents {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+  min-width: 200px;
+}
+
+.table-of-contents.empty {
+  opacity: 0.7;
+}
+
+.toc-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #e9ecef;
+}
+
+.toc-empty {
+  font-size: 14px;
+  color: #6c757d;
+  font-style: italic;
+  text-align: center;
+  padding: 20px 0;
+}
+
+.toc-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.toc-item {
+  padding: 8px 12px;
+  margin: 4px 0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  font-size: 14px;
+  color: #495057;
+  border-left: 3px solid transparent;
+}
+
+.toc-item:hover {
+  background-color: #e9ecef;
+  color: #212529;
+}
+
+.toc-item.level-1 {
+  font-weight: 600;
+  font-size: 15px;
+  border-left-color: #007bff;
+}
+
+.toc-item.level-2 {
+  padding-left: 24px;
+  font-weight: 500;
+  border-left-color: #6c757d;
+}
+
+.toc-item.level-3 {
+  padding-left: 40px;
+  font-size: 13px;
+  border-left-color: #adb5bd;
+}
+
+.toc-item.level-4,
+.toc-item.level-5,
+.toc-item.level-6 {
+  padding-left: 56px;
+  font-size: 12px;
+  color: #6c757d;
+  border-left-color: #dee2e6;
+}
+
+.toc-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sidebar TOC styles */
+.sidebar-toc {
+  position: fixed;
+  right: 20px;
+  top: 100px;
+  width: 250px;
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+  background: white;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+}
+
+.sidebar-toc .toc-title {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.sidebar-toc .toc-item {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.sidebar-toc .toc-item.level-1 {
+  font-size: 13px;
+}
+
+.sidebar-toc .toc-item.level-2 {
+  padding-left: 16px;
+}
+
+.sidebar-toc .toc-item.level-3 {
+  padding-left: 28px;
+}
+
+.sidebar-toc .toc-item.level-4,
+.sidebar-toc .toc-item.level-5,
+.sidebar-toc .toc-item.level-6 {
+  padding-left: 40px;
+}

@@ -1,0 +1,105 @@
+.pagination-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+  background-color: #f5f5f5;
+}
+
+.pages-container {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.page {
+  position: relative;
+  background-color: white;
+  border: 1px solid #ddd;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 50px;
+  box-sizing: border-box;
+  overflow: hidden;
+  page-break-inside: avoid;
+}
+
+.page-number {
+  position: absolute;
+  bottom: 20px;
+  right: 50px;
+  font-size: 12px;
+  color: #666;
+  font-family: Arial, sans-serif;
+}
+
+/* Ensure content fits within pages */
+.page * {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.page p {
+  margin: 0 0 16px 0;
+  line-height: 1.5;
+}
+
+.page h1,
+.page h2,
+.page h3 {
+  margin: 24px 0 16px 0;
+}
+
+.page ul,
+.page ol {
+  margin: 0 0 16px 24px;
+}
+
+.page li {
+  margin: 4px 0;
+}
+
+.page table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+}
+
+.page th,
+.page td {
+  border: 1px solid #ddd;
+  padding: 8px;
+}
+
+.page th {
+  background-color: #f0f0f0;
+}
+
+/* Comment highlighting should still work */
+.page .comment-highlight {
+  background-color: rgba(255, 255, 0, 0.3);
+  border-bottom: 1px dashed #333;
+}
+
+/* Math formula styles in pagination preview */
+.page .math-formula {
+  display: inline-block;
+  padding: 0 4px;
+  margin: 0 2px;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+}
+
+/* Ensure KaTeX styles are applied correctly in preview */
+.page .math-formula * {
+  font-size: inherit !important;
+}
+
+/* Hide MathML part in preview */
+.page .math-formula .katex-mathml {
+  display: none !important;
+}
+
+/* Ensure katex-html part is visible in preview */
+.page .math-formula .katex-html {
+  display: inline !important;
+}

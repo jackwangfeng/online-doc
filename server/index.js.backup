@@ -1,0 +1,73 @@
+#!/usr/bin/env node
+
+const WebSocket = require('ws')
+const http = require('http')
+const Y = require('yjs')
+const { setupWSConnection, setPersistence, docs } = require('y-websocket/bin/utils')
+require('dotenv').config()
+
+const persistence = require('./yjs-persistence')
+
+// 自定义持久化层
+const customPersistence = {
+  provider: persistence,
+  bindState: async (docName, ydoc) => {
+    // 从数据库加载更新
+    const updates = await persistence.getUpdates(docName)
+    if (updates.length > 0) {
+      console.log(`Loading ${updates.length} updates for room: ${docName}`)
+      updates.forEach(update => {
+        try {
+          Y.applyUpdate(ydoc, new Uint8Array(update))
+        } catch (err) {
+          console.error(`Error applying update for ${docName}:`, err)
+        }
+      })
+    }
+    
+    // 监听更新并保存到数据库
+    ydoc.on('update', async (update, origin) => {
+      await persistence.storeUpdate(docName, Buffer.from(update))
+    })
+  },
+  writeState: async (docName, ydoc) => {
+    console.log(`Persisting document: ${docName}`)
+    return true
+  }
+}
+
+// 设置持久化层
+setPersistence(customPersistence)
+
+const wss = new WebSocket.Server({ noServer: true })
+
+const host = process.env.HOST || 'localhost'
+const port = process.env.PORT || 3000
+
+const server = http.createServer((request, response) => {
+  response.writeHead(200, { 'Content-Type': 'text/plain' })
+  response.end('Yjs WebSocket Server\n')
+})
+
+wss.on('connection', (ws, req) => {
+  // 获取room名称
+  const url = new URL(req.url, `http://${req.headers.host}`)
+  const roomName = url.pathname.slice(1) || 'default'
+  
+  console.log(`WebSocket connection for room: ${roomName}`)
+  
+  // 使用y-websocket的setupWSConnection
+  setupWSConnection(ws, req, { docName: roomName, gc: true })
+})
+
+server.on('upgrade', (request, socket, head) => {
+  const handleAuth = ws => {
+    wss.emit('connection', ws, request)
+  }
+  wss.handleUpgrade(request, socket, head, handleAuth)
+})
+
+server.listen(port, host, () => {
+  console.log(`Yjs WebSocket Server running at '${host}' on port ${port}`)
+  console.log(`WebSocket available at ws://${host}:${port}`)
+})

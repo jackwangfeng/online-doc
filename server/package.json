@@ -1,0 +1,27 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@tiptap/y-tiptap": "^3.0.2",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.4",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "lib0": "^0.2.117",
+    "pg": "^8.18.0",
+    "ws": "^8.19.0",
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^1.5.4",
+    "yjs": "^13.6.29"
+  }
+}

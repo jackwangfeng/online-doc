@@ -1,0 +1,143 @@
+.comment-sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  height: fit-content;
+  max-height: calc(100vh - 200px);
+  overflow-y: auto;
+}
+
+.comment-sidebar-header {
+  padding: 16px;
+  border-bottom: 1px solid #e5e7eb;
+  position: sticky;
+  top: 0;
+  background: white;
+  border-radius: 12px 12px 0 0;
+}
+
+.comment-sidebar-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.comment-sidebar-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.comment-list {
+  padding: 8px;
+}
+
+.comment-card {
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+}
+
+.comment-card:hover {
+  background: #f9fafb;
+}
+
+.comment-card.active {
+  background: #fef9c3;
+  border-color: #fde047;
+}
+
+.comment-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.comment-author {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.comment-time {
+  font-size: 11px;
+  color: #9ca3af;
+  flex: 1;
+}
+
+.comment-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #9ca3af;
+  opacity: 0;
+  transition: all 0.15s ease;
+}
+
+.comment-card:hover .comment-delete {
+  opacity: 1;
+}
+
+.comment-delete:hover {
+  background: #fee2e2;
+  color: #ef4444;
+}
+
+.comment-text {
+  font-size: 13px;
+  color: #374151;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.comment-input-wrapper {
+  display: flex;
+  gap: 4px;
+}
+
+.comment-input-wrapper input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.comment-input-wrapper input:focus {
+  border-color: #3b82f6;
+}
+
+.comment-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: #3b82f6;
+  border-radius: 6px;
+  cursor: pointer;
+  color: white;
+  transition: background 0.15s ease;
+}
+
+.comment-submit:hover {
+  background: #2563eb;
+}
