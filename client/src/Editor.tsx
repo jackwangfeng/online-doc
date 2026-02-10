@@ -8,6 +8,8 @@ import { TableHeader } from '@tiptap/extension-table-header'
 import Highlight from '@tiptap/extension-highlight'
 import Image from '@tiptap/extension-image'
 import Link from '@tiptap/extension-link'
+import Color from '@tiptap/extension-color'
+import { TextStyle } from '@tiptap/extension-text-style'
 import * as Y from 'yjs'
 import { WebsocketProvider } from 'y-websocket'
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -18,7 +20,7 @@ import {
   Table as TableIcon, Plus, Trash2,
   MessageSquare, FunctionSquare, X, Check,
   Printer, History, RotateCcw, Save, FileCode, FileUp,
-  Code2, Image as ImageIcon, Link as LinkIcon
+  Code2, Image as ImageIcon, Link as LinkIcon, Palette
 } from 'lucide-react'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
@@ -36,6 +38,95 @@ interface ToolbarButtonProps {
   disabled?: boolean
   title: string
   children: React.ReactNode
+}
+
+// Color picker component
+function ColorPicker({ editor }: { editor: any }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [customColor, setCustomColor] = useState('#3b82f6')
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Close when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as unknown as globalThis.Node)) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const colors = [
+    '#000000', '#1f2937', '#374151', '#6b7280', '#9ca3af', '#d1d5db', '#e5e7eb', '#f3f4f6',
+    '#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e', '#10b981', '#14b8a6',
+    '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899',
+    '#f43f5e', '#7c2d12', '#9a3412', '#854d0e', '#3f6212', '#14532d', '#064e3b', '#115e59',
+  ]
+
+  const currentColor = editor?.getAttributes('textStyle').color
+
+  const handleColorSelect = (color: string | null) => {
+    if (color === null) {
+      editor.chain().focus().unsetColor().run()
+    } else {
+      editor.chain().focus().setColor(color).run()
+    }
+    setIsOpen(false)
+  }
+
+  return (
+    <div className="color-picker-container" ref={containerRef}>
+      <button
+        className={`toolbar-btn ${currentColor ? 'is-active' : ''}`}
+        onClick={() => setIsOpen(!isOpen)}
+        title="Text Color"
+      >
+        <Palette size={18} />
+      </button>
+      {isOpen && (
+        <div className="color-picker-dropdown">
+          <div className="color-picker-header">Text Color</div>
+          <div className="color-grid">
+            <div
+              className={`color-swatch clear ${!currentColor ? 'active' : ''}`}
+              onClick={() => handleColorSelect(null)}
+              title="Clear color"
+            />
+            {colors.map((color) => (
+              <div
+                key={color}
+                className={`color-swatch ${currentColor === color ? 'active' : ''}`}
+                style={{ backgroundColor: color }}
+                onClick={() => handleColorSelect(color)}
+                title={color}
+              />
+            ))}
+          </div>
+          <div className="color-custom">
+            <input
+              type="color"
+              value={customColor}
+              onChange={(e) => setCustomColor(e.target.value)}
+            />
+            <input
+              type="text"
+              value={customColor}
+              onChange={(e) => setCustomColor(e.target.value)}
+              placeholder="#3b82f6"
+            />
+            <button
+              className="toolbar-btn"
+              onClick={() => handleColorSelect(customColor)}
+              title="Apply custom color"
+            >
+              <Check size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 interface Comment {
@@ -305,6 +396,10 @@ export default function Editor({ roomId, userName }: EditorProps) {
       Link.configure({
         openOnClick: false,
       }),
+      TextStyle,
+      Color.configure({
+        types: ['textStyle'],
+      }),
     ],
     onSelectionUpdate: ({ editor }) => {
       const { from, to } = editor.state.selection
@@ -541,6 +636,7 @@ export default function Editor({ roomId, userName }: EditorProps) {
             >
               <span style={{ fontSize: 14, fontWeight: 'bold' }}>H</span>
             </ToolbarButton>
+            <ColorPicker editor={editor} />
           </div>
 
           <Divider />
