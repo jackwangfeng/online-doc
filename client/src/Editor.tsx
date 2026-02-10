@@ -650,35 +650,61 @@ export default function Editor({ roomId, userName }: EditorProps) {
             </button>
           </div>
 
-          <div className="versions-section">
-            <h4>Snapshots</h4>
+          <div className="versions-section snapshots-section">
+            <div className="section-header">
+              <h4>Snapshots</h4>
+              <span className="section-count">{snapshots.length}</span>
+            </div>
             <div className="snapshot-input">
               <input
                 type="text"
-                placeholder="Snapshot name..."
+                placeholder="Name your snapshot..."
                 value={newSnapshotName}
                 onChange={(e) => setNewSnapshotName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && createSnapshot()}
               />
-              <button onClick={createSnapshot} disabled={!newSnapshotName.trim()}>
+              <button 
+                className="snapshot-save-btn"
+                onClick={createSnapshot} 
+                disabled={!newSnapshotName.trim()}
+              >
                 <Save size={16} />
+                Save
               </button>
             </div>
             <div className="snapshots-list">
               {snapshots.length === 0 ? (
-                <div className="versions-empty">No snapshots yet</div>
+                <div className="versions-empty">
+                  <div className="empty-icon">📸</div>
+                  <p>No snapshots yet</p>
+                  <span>Save important versions here</span>
+                </div>
               ) : (
-                snapshots.map(snapshot => (
+                snapshots.map((snapshot, index) => (
                   <div key={snapshot.id} className="snapshot-item">
-                    <div className="snapshot-name">{snapshot.name}</div>
-                    <div className="snapshot-meta">
-                      by {snapshot.createdBy} • {new Date(snapshot.createdAt).toLocaleString()}
+                    <div className="snapshot-main">
+                      <span className="snapshot-number">{snapshots.length - index}</span>
+                      <div className="snapshot-info">
+                        <div className="snapshot-name">{snapshot.name}</div>
+                        <div className="snapshot-meta">
+                          <span className="meta-item">{snapshot.createdBy}</span>
+                          <span className="meta-separator">•</span>
+                          <span className="meta-item">{new Date(snapshot.createdAt).toLocaleString('zh-CN', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}</span>
+                        </div>
+                      </div>
                     </div>
                     <button
                       className="snapshot-restore-btn"
                       onClick={() => restoreSnapshot(snapshot.id)}
+                      title="Restore to this version"
                     >
                       <RotateCcw size={14} />
-                      Restore
+                      恢复
                     </button>
                   </div>
                 ))
@@ -686,27 +712,45 @@ export default function Editor({ roomId, userName }: EditorProps) {
             </div>
           </div>
 
-          <div className="versions-section">
-            <h4>Auto-saved Versions</h4>
+          <div className="versions-section autosave-section">
+            <div className="section-header">
+              <h4>Auto-saved</h4>
+              <span className="section-count">{versions.length}</span>
+            </div>
             <div className="versions-list">
               {versions.length === 0 ? (
-                <div className="versions-empty">No versions yet</div>
+                <div className="versions-empty">
+                  <div className="empty-icon">🕐</div>
+                  <p>No auto-saved versions</p>
+                </div>
               ) : (
-                versions.map(version => (
+                versions.map((version, index) => (
                   <div key={version.id} className={`version-item ${version.isCurrent ? 'current' : ''}`}>
-                    <div className="version-header">
-                      <div className="version-time">{new Date(version.createdAt).toLocaleString()}</div>
-                      {version.isCurrent && <span className="version-current-badge">Current</span>}
+                    <div className="version-main">
+                      <span className="version-number">{versions.length - index}</span>
+                      <div className="version-info">
+                        <div className="version-time">
+                          {new Date(version.createdAt).toLocaleString('zh-CN', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                          {version.isCurrent && <span className="current-badge">current</span>}
+                        </div>
+                        <div className="version-size">{(version.dataSize / 1024).toFixed(1)} KB</div>
+                      </div>
                     </div>
-                    <div className="version-size">{(version.dataSize / 1024).toFixed(2)} KB</div>
-                    <button
-                      className="version-rollback-btn"
-                      onClick={() => rollbackToVersion(version.id)}
-                      disabled={version.isCurrent}
-                    >
-                      <RotateCcw size={14} />
-                      {version.isCurrent ? 'Current' : 'Rollback'}
-                    </button>
+                    {!version.isCurrent && (
+                      <button
+                        className="version-rollback-btn"
+                        onClick={() => rollbackToVersion(version.id)}
+                        title="Rollback to this version"
+                      >
+                        <RotateCcw size={14} />
+                        回滚
+                      </button>
+                    )}
                   </div>
                 ))
               )}
