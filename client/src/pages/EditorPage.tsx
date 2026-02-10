@@ -1,111 +1,136 @@
-import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, LogOut } from 'lucide-react'
+import { ArrowLeft, Edit2, Check, X } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { useAuth } from '../contexts/AuthContext'
 import Editor from '../Editor'
-import { documentApi, authApi } from '../api'
 import './EditorPage.css'
 
-interface User {
-  id: number
-  username: string
-  email: string
-}
-
-interface Document {
-  id: string
-  title: string
-  owner_id: number
-}
+const API_URL = 'http://localhost:3000'
 
 export default function EditorPage() {
-  const { documentId } = useParams<{ documentId: string }>()
+  const { docId } = useParams<{ docId: string }>()
   const navigate = useNavigate()
-  const [user, setUser] = useState<User | null>(null)
-  const [document, setDocument] = useState<Document | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const { user, token } = useAuth()
+  const [docTitle, setDocTitle] = useState('')
+  const [isEditing, setIsEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+
+  const userName = user?.username || `Guest ${Math.floor(Math.random() * 1000)}`
 
   useEffect(() => {
-    loadData()
-  }, [documentId])
+    if (token && docId) {
+      fetchDocument()
+    }
+  }, [token, docId])
 
-  const loadData = async () => {
-    if (!documentId) {
-      navigate('/documents')
+  const fetchDocument = async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/documents/${docId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setDocTitle(data.document.title)
+      }
+    } catch (error) {
+      console.error('Error fetching document:', error)
+    }
+  }
+
+  const handleUpdateTitle = async () => {
+    if (!token || !docId) return
+
+    const newTitle = editTitle.trim()
+    if (!newTitle || newTitle === docTitle) {
+      setIsEditing(false)
       return
     }
 
     try {
-      const [docData, userData] = await Promise.all([
-        documentApi.getById(documentId),
-        authApi.getMe(),
-      ])
-      setDocument(docData.document)
-      setUser(userData.user)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load document')
-      if (err instanceof Error && err.message.includes('token')) {
-        handleLogout()
+      const response = await fetch(`${API_URL}/api/documents/${docId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ title: newTitle })
+      })
+
+      if (response.ok) {
+        setDocTitle(newTitle)
+        setIsEditing(false)
       }
-    } finally {
-      setLoading(false)
+    } catch (error) {
+      console.error('Error updating title:', error)
     }
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('token')
-    localStorage.removeItem('user')
-    navigate('/login')
+  const startEditing = () => {
+    setEditTitle(docTitle)
+    setIsEditing(true)
   }
 
-  if (loading) {
-    return (
-      <div className="editor-page">
-        <div className="editor-loading">Loading document...</div>
-      </div>
-    )
+  const cancelEditing = () => {
+    setIsEditing(false)
+    setEditTitle('')
   }
 
-  if (error || !document || !user) {
-    return (
-      <div className="editor-page">
-        <div className="editor-error">
-          <p>{error || 'Document not found'}</p>
-          <button onClick={() => navigate('/documents')}>
-            Back to Documents
-          </button>
-        </div>
-      </div>
-    )
+  if (!docId) {
+    return <div>Document not found</div>
   }
 
   return (
     <div className="editor-page">
-      <header className="editor-page-header">
-        <div className="header-left">
-          <button
-            className="back-btn"
-            onClick={() => navigate('/documents')}
-          >
+      <header className="editor-header">
+        <div className="editor-header-left">
+          <button className="back-btn" onClick={() => navigate('/documents')}>
             <ArrowLeft size={20} />
-            Back
+            返回
           </button>
-          <div className="document-title-wrapper">
-            <h1>{document.title}</h1>
-            <span className="document-id">ID: {document.id}</span>
-          </div>
+          
+          {isEditing ? (
+            <div className="title-edit">
+              <input
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleUpdateTitle()
+                  if (e.key === 'Escape') cancelEditing()
+                }}
+                autoFocus
+              />
+              <button className="icon-btn save" onClick={handleUpdateTitle}>
+                <Check size={16} />
+              </button>
+              <button className="icon-btn cancel" onClick={cancelEditing}>
+                <X size={16} />
+              </button>
+            </div>
+          ) : (
+            <div className="title-display">
+              <h1>{docTitle || 'Untitled Document'}</h1>
+              {token && (
+                <button className="icon-btn edit" onClick={startEditing}>
+                  <Edit2 size={16} />
+                </button>
+              )}
+            </div>
+          )}
         </div>
-        <div className="header-right">
-          <span className="user-name">{user.username}</span>
-          <button className="logout-btn" onClick={handleLogout}>
-            <LogOut size={18} />
-            Logout
-          </button>
+
+        <div className="editor-header-right">
+          {user?.avatar && (
+            <img src={user.avatar} alt={user.username} className="user-avatar-small" />
+          )}
+          <span className="user-name">{user?.username || 'Guest'}</span>
         </div>
       </header>
-
-      <main className="editor-page-content">
-        <Editor roomId={document.id} userName={user.username} />
+      <main className="editor-main">
+        <Editor roomId={docId} userName={userName} />
       </main>
     </div>
   )

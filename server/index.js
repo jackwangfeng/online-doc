@@ -10,9 +10,17 @@ const http = require('http')
 const Y = require('yjs')
 const { setupWSConnection, setPersistence, docs } = require('y-websocket/bin/utils')
 const persistence = require('./yjs-persistence')
+const db = require('./db')
+const jwt = require('jsonwebtoken')
+const { OAuth2Client } = require('google-auth-library')
 
 const host = process.env.HOST || 'localhost'
 const port = process.env.PORT || 3000
+
+// Google OAuth 配置
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '420915666656-pqdnftq8dvapd7ih1t661g9kk63ivljv.apps.googleusercontent.com'
+const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key'
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID)
 
 // 自定义持久化层
 const customPersistence = {
@@ -94,7 +102,19 @@ const server = http.createServer((request, response) => {
     handleVersionsAPI(request, response)
     return
   }
-  
+
+  // 认证路由
+  if (request.url === '/auth/google' && request.method === 'POST') {
+    handleGoogleAuth(request, response)
+    return
+  }
+
+  // 文档管理路由
+  if (request.url.startsWith('/api/documents')) {
+    handleDocumentsAPI(request, response)
+    return
+  }
+
   response.writeHead(200, { 'Content-Type': 'text/plain' })
   response.end('Yjs WebSocket Server\n')
 })
@@ -294,6 +314,264 @@ async function handleVersionsAPI(request, response) {
     response.end(JSON.stringify({ error: 'Not found' }))
   } catch (err) {
     console.error('Versions API error:', err)
+    response.writeHead(500, { 'Content-Type': 'application/json' })
+    response.end(JSON.stringify({ error: err.message }))
+  }
+}
+
+// 处理 Google 认证
+async function handleGoogleAuth(request, response) {
+  let body = ''
+  request.on('data', chunk => body += chunk)
+  request.on('end', async () => {
+    try {
+      const { credential } = JSON.parse(body)
+      
+      // 验证 Google ID Token
+      const ticket = await googleClient.verifyIdToken({
+        idToken: credential,
+        audience: GOOGLE_CLIENT_ID
+      })
+      
+      const payload = ticket.getPayload()
+      const email = payload.email
+      const googleId = payload.sub
+      const displayName = payload.name
+      const avatar = payload.picture
+      
+      // 检查用户是否已存在
+      let userResult = await db.query(
+        'SELECT * FROM users WHERE email = $1 OR google_id = $2',
+        [email, googleId]
+      )
+      
+      let user
+      
+      if (userResult.rows.length > 0) {
+        user = userResult.rows[0]
+        // 更新用户信息
+        if (!user.google_id) {
+          await db.query(
+            'UPDATE users SET google_id = $1, avatar = $2 WHERE id = $3',
+            [googleId, avatar, user.id]
+          )
+        }
+      } else {
+        // 创建新用户
+        const insertResult = await db.query(
+          'INSERT INTO users (username, email, google_id, avatar, password_hash) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+          [displayName, email, googleId, avatar, 'google-oauth']
+        )
+        user = insertResult.rows[0]
+      }
+      
+      // 生成 JWT token
+      const token = jwt.sign(
+        { 
+          userId: user.id, 
+          email: user.email,
+          username: user.username,
+          avatar: user.avatar
+        },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      )
+      
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          avatar: user.avatar
+        }
+      }))
+    } catch (err) {
+      console.error('Google auth error:', err)
+      response.writeHead(401, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({ error: 'Authentication failed' }))
+    }
+  })
+}
+
+// JWT 验证辅助函数
+function verifyToken(authHeader) {
+  if (!authHeader) return null
+  const token = authHeader.split(' ')[1]
+  if (!token) return null
+  try {
+    return jwt.verify(token, JWT_SECRET)
+  } catch {
+    return null
+  }
+}
+
+// 处理文档管理 API
+async function handleDocumentsAPI(request, response) {
+  const url = new URL(request.url, `http://${request.headers.host}`)
+  const pathParts = url.pathname.split('/')
+  const docId = pathParts[3]
+  
+  // 验证用户
+  const user = verifyToken(request.headers.authorization)
+  if (!user) {
+    response.writeHead(401, { 'Content-Type': 'application/json' })
+    response.end(JSON.stringify({ error: 'Unauthorized' }))
+    return
+  }
+  
+  try {
+    // GET /api/documents - 获取文档列表
+    if (!docId && request.method === 'GET') {
+      const result = await db.query(
+        `SELECT d.*, u.username as owner_name, u.avatar as owner_avatar
+         FROM documents d 
+         JOIN users u ON d.owner_id = u.id 
+         WHERE d.owner_id = $1 
+         ORDER BY d.updated_at DESC`,
+        [user.userId]
+      )
+      
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({
+        documents: result.rows.map(doc => ({
+          id: doc.id,
+          title: doc.title,
+          ownerId: doc.owner_id,
+          ownerName: doc.owner_name,
+          ownerAvatar: doc.owner_avatar,
+          createdAt: doc.created_at,
+          updatedAt: doc.updated_at
+        }))
+      }))
+      return
+    }
+    
+    // POST /api/documents - 创建新文档
+    if (!docId && request.method === 'POST') {
+      let body = ''
+      request.on('data', chunk => body += chunk)
+      request.on('end', async () => {
+        try {
+          const { title = 'Untitled Document' } = JSON.parse(body)
+          
+          const result = await db.query(
+            'INSERT INTO documents (title, owner_id) VALUES ($1, $2) RETURNING *',
+            [title, user.userId]
+          )
+          
+          const doc = result.rows[0]
+          response.writeHead(201, { 'Content-Type': 'application/json' })
+          response.end(JSON.stringify({
+            document: {
+              id: doc.id,
+              title: doc.title,
+              ownerId: doc.owner_id,
+              createdAt: doc.created_at,
+              updatedAt: doc.updated_at
+            }
+          }))
+        } catch (err) {
+          response.writeHead(500, { 'Content-Type': 'application/json' })
+          response.end(JSON.stringify({ error: err.message }))
+        }
+      })
+      return
+    }
+    
+    // GET /api/documents/:id - 获取单个文档
+    if (docId && request.method === 'GET') {
+      const result = await db.query(
+        `SELECT d.*, u.username as owner_name, u.avatar as owner_avatar
+         FROM documents d 
+         JOIN users u ON d.owner_id = u.id 
+         WHERE d.id = $1 AND d.owner_id = $2`,
+        [docId, user.userId]
+      )
+      
+      if (result.rows.length === 0) {
+        response.writeHead(404, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ error: 'Document not found' }))
+        return
+      }
+      
+      const doc = result.rows[0]
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({
+        document: {
+          id: doc.id,
+          title: doc.title,
+          ownerId: doc.owner_id,
+          ownerName: doc.owner_name,
+          ownerAvatar: doc.owner_avatar,
+          createdAt: doc.created_at,
+          updatedAt: doc.updated_at
+        }
+      }))
+      return
+    }
+    
+    // PUT /api/documents/:id - 更新文档
+    if (docId && request.method === 'PUT') {
+      let body = ''
+      request.on('data', chunk => body += chunk)
+      request.on('end', async () => {
+        try {
+          const { title } = JSON.parse(body)
+          
+          const result = await db.query(
+            'UPDATE documents SET title = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND owner_id = $3 RETURNING *',
+            [title, docId, user.userId]
+          )
+          
+          if (result.rows.length === 0) {
+            response.writeHead(404, { 'Content-Type': 'application/json' })
+            response.end(JSON.stringify({ error: 'Document not found' }))
+            return
+          }
+          
+          const doc = result.rows[0]
+          response.writeHead(200, { 'Content-Type': 'application/json' })
+          response.end(JSON.stringify({
+            document: {
+              id: doc.id,
+              title: doc.title,
+              ownerId: doc.owner_id,
+              createdAt: doc.created_at,
+              updatedAt: doc.updated_at
+            }
+          }))
+        } catch (err) {
+          response.writeHead(500, { 'Content-Type': 'application/json' })
+          response.end(JSON.stringify({ error: err.message }))
+        }
+      })
+      return
+    }
+    
+    // DELETE /api/documents/:id - 删除文档
+    if (docId && request.method === 'DELETE') {
+      const result = await db.query(
+        'DELETE FROM documents WHERE id = $1 AND owner_id = $2 RETURNING *',
+        [docId, user.userId]
+      )
+      
+      if (result.rows.length === 0) {
+        response.writeHead(404, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ error: 'Document not found' }))
+        return
+      }
+      
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({ message: 'Document deleted successfully' }))
+      return
+    }
+    
+    response.writeHead(404, { 'Content-Type': 'application/json' })
+    response.end(JSON.stringify({ error: 'Not found' }))
+  } catch (err) {
+    console.error('Documents API error:', err)
     response.writeHead(500, { 'Content-Type': 'application/json' })
     response.end(JSON.stringify({ error: err.message }))
   }
