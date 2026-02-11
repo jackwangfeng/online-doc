@@ -14,6 +14,7 @@ const db = require('./db')
 const jwt = require('jsonwebtoken')
 const { OAuth2Client } = require('google-auth-library')
 const upload = require('./routes/upload')
+const connectionManager = require('./connection-manager')
 
 const host = process.env.HOST || 'localhost'
 const port = process.env.PORT || 3000
@@ -48,7 +49,10 @@ const customPersistence = {
   },
   writeState: async (docName, ydoc) => {
     console.log(`Persisting document: ${docName}`)
-    return true
+    // 注意：不要在这里返回，让 Promise 永远 pending
+    // 这样可以阻止 y-websocket 删除文档
+    // 文档的生命周期由 ConnectionManager 管理
+    return new Promise(() => {})
   }
 }
 
@@ -72,11 +76,16 @@ const server = http.createServer((request, response) => {
   // 添加一个简单的状态页面
   if (request.url === '/status') {
     const activeDocs = Array.from(docs.keys())
+    const connectionStats = connectionManager.getStats()
     response.writeHead(200, { 'Content-Type': 'application/json' })
     response.end(JSON.stringify({
       status: 'running',
       activeDocuments: activeDocs.length,
-      documents: activeDocs
+      documents: activeDocs.map(name => ({
+        name,
+        connections: connectionStats[name] || 0
+      })),
+      connectionStats
     }, null, 2))
     return
   }
@@ -583,6 +592,16 @@ wss.on('connection', (ws, req) => {
   
   // 使用 y-websocket 的 setupWSConnection
   setupWSConnection(ws, req, { docName: roomName, gc: true })
+  
+  // 延迟注册到连接管理器，确保文档已创建
+  setImmediate(() => {
+    const ydoc = docs.get(roomName)
+    if (ydoc) {
+      connectionManager.onConnect(roomName, ws, ydoc)
+    } else {
+      console.warn(`[Server] Document ${roomName} not found after setupWSConnection`)
+    }
+  })
 })
 
 server.on('upgrade', (request, socket, head) => {
@@ -598,14 +617,14 @@ const SYNC_INTERVAL = 5 * 60 * 1000 // 5分钟
 setInterval(async () => {
   console.log('Running periodic sync to database...')
   const activeDocs = Array.from(docs.keys())
-  
+
   for (const docName of activeDocs) {
     try {
       const ydoc = docs.get(docName)
       if (ydoc) {
         // 获取当前状态
         const state = Y.encodeStateAsUpdate(ydoc)
-        
+
         // 保存到数据库
         await persistence.storeUpdate(docName, Buffer.from(state))
         console.log(`Synced document: ${docName} (${state.length} bytes)`)
@@ -614,7 +633,7 @@ setInterval(async () => {
       console.error(`Error syncing document ${docName}:`, err)
     }
   }
-  
+
   console.log(`Periodic sync completed. Synced ${activeDocs.length} documents.`)
 }, SYNC_INTERVAL)
 

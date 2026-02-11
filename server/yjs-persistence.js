@@ -23,7 +23,8 @@ class PostgresPersistence {
    * Get a Yjs document for a room
    * Loads from database if exists, creates new if not
    * 
-   * 支持回滚功能：如果设置了 current_version_id，只加载到该版本
+   * 优化：只加载最新的状态（最后保存的快照）
+   * 版本历史通过 API 按需查询
    */
   async getYDoc(roomName) {
     // Check cache first
@@ -31,35 +32,16 @@ class PostgresPersistence {
       return this.docs.get(roomName)
     }
 
-    // Create new document
-    const ydoc = new Y.Doc()
-
     // 检查是否有当前版本指针（回滚后设置）
     const currentVersionId = await this.getCurrentVersion(roomName)
     
+    // 使用统一加载逻辑：快照 + 增量
+    const ydoc = await this.loadDocumentWithSnapshot(roomName, currentVersionId)
+    
     if (currentVersionId) {
-      // 有版本指针：只加载到指定版本
-      const updates = await this.getUpdatesUntilVersion(roomName, currentVersionId)
-      updates.forEach(update => {
-        try {
-          Y.applyUpdate(ydoc, update)
-        } catch (err) {
-          console.error(`Error applying update for room ${roomName}:`, err)
-        }
-      })
       console.log(`Loaded document ${roomName} at version ${currentVersionId}`)
     } else {
-      // 没有版本指针：加载所有更新（正常模式）
-      const updates = await this.getUpdates(roomName)
-      if (updates.length > 0) {
-        updates.forEach(update => {
-          try {
-            Y.applyUpdate(ydoc, update)
-          } catch (err) {
-            console.error(`Error applying update for room ${roomName}:`, err)
-          }
-        })
-      }
+      console.log(`Loaded latest document ${roomName}`)
     }
 
     // Cache the document
@@ -105,10 +87,26 @@ class PostgresPersistence {
 
   /**
    * 刷新更新缓冲区，保存到数据库
+   * @param {string} roomName - 房间名称
+   * @param {Y.Doc} ydoc - Yjs 文档（可选，如果不提供则从缓存中获取）
    */
-  async flushUpdateBuffer(roomName, ydoc) {
+  async flushUpdateBuffer(roomName, ydoc = null) {
     const buffer = this.updateBuffers.get(roomName)
     if (!buffer || buffer.updates.length === 0) return
+
+    // 如果没有提供 ydoc，尝试从缓存获取
+    if (!ydoc) {
+      ydoc = this.docs.get(roomName)
+    }
+    
+    if (!ydoc) {
+      console.log(`No ydoc found for ${roomName}, flushing buffer without content check`)
+      // 没有 ydoc，直接保存更新
+      const mergedUpdate = Y.mergeUpdates(buffer.updates)
+      await this.storeUpdate(roomName, mergedUpdate)
+      buffer.updates = []
+      return
+    }
 
     // 合并所有更新
     const mergedUpdate = Y.mergeUpdates(buffer.updates)
@@ -244,15 +242,61 @@ class PostgresPersistence {
 
   /**
    * Store an update in the database
+   * 每 50 个版本自动创建快照（单独插入一条快照记录）
    */
   async storeUpdate(roomName, update) {
     try {
-      await db.query(
-        'INSERT INTO yjs_updates (room_name, update_data) VALUES ($1, $2)',
+      // 插入更新
+      const result = await db.query(
+        'INSERT INTO yjs_updates (room_name, update_data, is_snapshot) VALUES ($1, $2, FALSE) RETURNING id, created_at',
         [roomName, Buffer.from(update)]
       )
+      
+      const updateId = result.rows[0].id
+      
+      // 检查是否需要创建快照（每 50 个版本）
+      const countResult = await db.query(
+        'SELECT COUNT(*) as count FROM yjs_updates WHERE room_name = $1',
+        [roomName]
+      )
+      const versionCount = parseInt(countResult.rows[0].count)
+      
+      // 每 50 个版本创建快照
+      if (versionCount % 50 === 0) {
+        await this.createSnapshotRecord(roomName, updateId)
+      }
+      
+      return updateId
     } catch (err) {
       console.error(`Error storing update for room ${roomName}:`, err)
+      throw err
+    }
+  }
+  
+  /**
+   * 创建快照记录（单独插入一条完整状态记录）
+   * @param {string} roomName - 房间名称
+   * @param {number} afterUpdateId - 在该更新之后创建快照
+   */
+  async createSnapshotRecord(roomName, afterUpdateId) {
+    try {
+      console.log(`Creating snapshot for ${roomName} after version ${afterUpdateId}`)
+      
+      // 获取当前完整状态（使用 loadDocumentWithSnapshot 加载）
+      const tempDoc = await this.loadDocumentWithSnapshot(roomName, afterUpdateId)
+      
+      // 生成完整状态
+      const snapshot = Y.encodeStateAsUpdate(tempDoc)
+      
+      // 插入快照记录（作为新的记录，标记为快照）
+      await db.query(
+        'INSERT INTO yjs_updates (room_name, update_data, is_snapshot) VALUES ($1, $2, TRUE)',
+        [roomName, Buffer.from(snapshot)]
+      )
+      
+      console.log(`Snapshot created for ${roomName} after version ${afterUpdateId} (${snapshot.length} bytes)`)
+    } catch (err) {
+      console.error(`Error creating snapshot for ${roomName}:`, err)
     }
   }
 
@@ -269,6 +313,27 @@ class PostgresPersistence {
     } catch (err) {
       console.error(`Error getting updates for room ${roomName}:`, err)
       return []
+    }
+  }
+
+  /**
+   * Get the latest update for a room (for fast loading)
+   * @param {string} roomName - 房间名称
+   * @returns {Uint8Array|null} 最新的更新数据
+   */
+  async getLatestUpdate(roomName) {
+    try {
+      const result = await db.query(
+        'SELECT update_data FROM yjs_updates WHERE room_name = $1 ORDER BY created_at DESC LIMIT 1',
+        [roomName]
+      )
+      if (result.rows.length > 0) {
+        return new Uint8Array(result.rows[0].update_data)
+      }
+      return null
+    } catch (err) {
+      console.error(`Error getting latest update for room ${roomName}:`, err)
+      return null
     }
   }
 
@@ -319,27 +384,78 @@ class PostgresPersistence {
     }
   }
 
+  // ==================== 快照加载管理 ====================
+
   /**
-   * Compact updates for a room - merge all updates into a single state update
-   * This helps reduce database size
+   * 统一加载逻辑：从快照加载 + 增量更新
+   * @param {string} roomName - 房间名称
+   * @param {number|null} targetVersionId - 目标版本ID（null表示最新版本）
+   * @returns {Y.Doc} 加载的文档
    */
-  async compactDocument(roomName) {
+  async loadDocumentWithSnapshot(roomName, targetVersionId = null) {
+    const ydoc = new Y.Doc()
+
     try {
-      const ydoc = await this.getYDoc(roomName)
-      const state = Y.encodeStateAsUpdate(ydoc)
+      // 1. 确定目标版本
+      let targetId = targetVersionId
+      if (!targetId) {
+        // 获取最新版本ID
+        const latestResult = await db.query(
+          'SELECT id FROM yjs_updates WHERE room_name = $1 ORDER BY created_at DESC LIMIT 1',
+          [roomName]
+        )
+        if (latestResult.rows.length === 0) {
+          return ydoc // 空文档
+        }
+        targetId = latestResult.rows[0].id
+      }
 
-      // Delete old updates
-      await db.query('DELETE FROM yjs_updates WHERE room_name = $1', [roomName])
-
-      // Store the compacted state as a single update
-      await db.query(
-        'INSERT INTO yjs_updates (room_name, update_data) VALUES ($1, $2)',
-        [roomName, Buffer.from(state)]
+      // 2. 找到目标版本之前的最新快照
+      const snapshotResult = await db.query(
+        `SELECT id, update_data FROM yjs_updates 
+         WHERE room_name = $1 
+         AND is_snapshot = TRUE 
+         AND id <= $2
+         ORDER BY id DESC 
+         LIMIT 1`,
+        [roomName, targetId]
       )
 
-      console.log(`Compacted document: ${roomName}`)
+      let startId = 0
+
+      if (snapshotResult.rows.length > 0) {
+        // 3. 加载快照
+        const snapshot = snapshotResult.rows[0]
+        Y.applyUpdate(ydoc, new Uint8Array(snapshot.update_data))
+        startId = snapshot.id
+        console.log(`Loaded snapshot for ${roomName} (id: ${startId}), target: ${targetId}`)
+      }
+
+      // 4. 加载快照到目标版本的增量更新
+      const updatesResult = await db.query(
+        `SELECT update_data FROM yjs_updates 
+         WHERE room_name = $1 
+         AND id > $2 
+         AND id <= $3
+         AND is_snapshot = FALSE
+         ORDER BY id ASC`,
+        [roomName, startId, targetId]
+      )
+
+      updatesResult.rows.forEach(row => {
+        try {
+          Y.applyUpdate(ydoc, new Uint8Array(row.update_data))
+        } catch (err) {
+          console.error(`Error applying incremental update for ${roomName}:`, err)
+        }
+      })
+
+      console.log(`Loaded ${updatesResult.rows.length} incremental updates for ${roomName}`)
+
+      return ydoc
     } catch (err) {
-      console.error(`Error compacting document ${roomName}:`, err)
+      console.error(`Error loading document ${roomName} with snapshot:`, err)
+      return ydoc
     }
   }
 
