@@ -27,6 +27,7 @@ import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
 import './Editor.css'
 import TableOfContents from './TableOfContents'
+import { Previewer } from 'pagedjs'
 
 interface EditorProps {
   roomId: string
