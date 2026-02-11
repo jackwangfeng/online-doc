@@ -155,13 +155,16 @@ interface Version {
   createdAt: string
   dataSize: number
   isCurrent?: boolean
+  isSnapshot?: boolean
+  tags?: Tag[]
 }
 
-interface Snapshot {
+interface Tag {
   id: number
-  name: string
-  createdAt: string
+  tagName: string
+  versionId: number
   createdBy: string
+  createdAt: string
 }
 
 function ToolbarButton({ onClick, isActive, disabled, title, children }: ToolbarButtonProps) {
@@ -326,8 +329,8 @@ export default function Editor({ roomId, userName }: EditorProps) {
   const [isPrintPreview, setIsPrintPreview] = useState(false)
   const [showVersionHistory, setShowVersionHistory] = useState(false)
   const [versions, setVersions] = useState<Version[]>([])
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([])
-  const [newSnapshotName, setNewSnapshotName] = useState('')
+  const [tags, setTags] = useState<Tag[]>([])
+  const [newTagName, setNewTagName] = useState('')
   const editorRef = useRef<any>(null)
   const commentsMapRef = useRef<Y.Map<any> | null>(null)
 
@@ -468,22 +471,36 @@ export default function Editor({ roomId, userName }: EditorProps) {
         if (!file) continue
 
         try {
+          // 第一步：获取预签名上传URL
+          const filename = file.name || 'pasted-image.png'
+          const urlResponse = await fetch(`http://localhost:3000/api/upload/url?filename=${encodeURIComponent(filename)}&contentType=${encodeURIComponent(file.type)}`)
+          
+          if (!urlResponse.ok) {
+            throw new Error('Failed to get upload URL')
+          }
+          
+          const urlData = await urlResponse.json()
+          if (!urlData.success) {
+            throw new Error(urlData.error || 'Failed to get upload URL')
+          }
+          
+          // 第二步：上传图片到获取的URL
           const formData = new FormData()
           formData.append('image', file)
-
-          const response = await fetch('http://localhost:3000/api/upload/image', {
+          
+          const uploadResponse = await fetch(`http://localhost:3000${urlData.uploadUrl}`, {
             method: 'POST',
             body: formData,
           })
-
-          if (!response.ok) {
+          
+          if (!uploadResponse.ok) {
             throw new Error('Upload failed')
           }
-
-          const data = await response.json()
-          if (data.success && data.url) {
+          
+          const uploadData = await uploadResponse.json()
+          if (uploadData.success && uploadData.url) {
             // 在光标位置插入图片
-            const imageUrl = `http://localhost:3000${data.url}`
+            const imageUrl = `http://localhost:3000${uploadData.url}`
             editor.chain().focus().setImage({ src: imageUrl }).run()
           }
         } catch (error) {
@@ -595,32 +612,43 @@ export default function Editor({ roomId, userName }: EditorProps) {
     }
   }, [roomId])
 
-  const fetchSnapshots = useCallback(async () => {
+  const fetchTags = useCallback(async () => {
     try {
-      const response = await fetch(`http://localhost:3000/versions/${roomId}/snapshots`)
+      const response = await fetch(`http://localhost:3000/tags/${roomId}`)
       const data = await response.json()
-      setSnapshots(data.snapshots || [])
+      setTags(data.tags || [])
     } catch (err) {
-      console.error('Error fetching snapshots:', err)
+      console.error('Error fetching tags:', err)
     }
   }, [roomId])
 
-  const createSnapshot = useCallback(async () => {
-    if (!newSnapshotName.trim()) return
+  const createTag = useCallback(async () => {
+    if (!newTagName.trim()) return
     try {
-      const response = await fetch(`http://localhost:3000/versions/${roomId}/snapshots`, {
+      // 获取最新版本ID
+      const versionsResponse = await fetch(`http://localhost:3000/versions/${roomId}/history?limit=1`)
+      const versionsData = await versionsResponse.json()
+      const latestVersionId = versionsData.versions?.[0]?.id
+
+      if (!latestVersionId) {
+        console.error('No version found to tag')
+        return
+      }
+
+      const response = await fetch(`http://localhost:3000/tags/${roomId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newSnapshotName, createdBy: userName })
+        body: JSON.stringify({ tagName: newTagName, versionId: latestVersionId, createdBy: userName })
       })
       if (response.ok) {
-        setNewSnapshotName('')
-        fetchSnapshots()
+        setNewTagName('')
+        fetchTags()
+        fetchVersions() // 刷新版本列表以显示新tag
       }
     } catch (err) {
-      console.error('Error creating snapshot:', err)
+      console.error('Error creating tag:', err)
     }
-  }, [roomId, newSnapshotName, userName, fetchSnapshots])
+  }, [roomId, newTagName, userName, fetchTags, fetchVersions])
 
   const rollbackToVersion = useCallback(async (versionId: number) => {
     if (!confirm('Are you sure you want to rollback to this version?\n\nAll history will be preserved. You can rollback to any version at any time.')) return
@@ -640,32 +668,12 @@ export default function Editor({ roomId, userName }: EditorProps) {
     }
   }, [roomId, userName])
 
-  const restoreSnapshot = useCallback(async (snapshotId: number) => {
-    if (!confirm('Are you sure you want to restore this snapshot?')) return
-    try {
-      const response = await fetch(`http://localhost:3000/versions/${roomId}/restore/${snapshotId}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ createdBy: userName })
-      })
-      if (response.ok) {
-        alert('Restore successful! The page will refresh to show the restored version.')
-        // 刷新页面以重新加载恢复的文档
-        window.location.reload()
-      }
-    } catch (err) {
-      console.error('Error restoring snapshot:', err)
-    }
-  }, [roomId, userName])
-
   useEffect(() => {
     if (showVersionHistory) {
       fetchVersions()
-      fetchSnapshots()
+      fetchTags()
     }
-  }, [showVersionHistory, fetchVersions, fetchSnapshots])
+  }, [showVersionHistory, fetchVersions, fetchTags])
 
   if (!editor) {
     return <div className="editor-loading">Loading...</div>
@@ -976,46 +984,46 @@ export default function Editor({ roomId, userName }: EditorProps) {
             </button>
           </div>
 
-          <div className="versions-section snapshots-section">
+          <div className="versions-section tags-section">
             <div className="section-header">
-              <h4>Snapshots</h4>
-              <span className="section-count">{snapshots.length}</span>
+              <h4>Tags</h4>
+              <span className="section-count">{tags.length}</span>
             </div>
-            <div className="snapshot-input">
+            <div className="tag-input">
               <input
                 type="text"
-                placeholder="Name your snapshot..."
-                value={newSnapshotName}
-                onChange={(e) => setNewSnapshotName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && createSnapshot()}
+                placeholder="Name your tag..."
+                value={newTagName}
+                onChange={(e) => setNewTagName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && createTag()}
               />
               <button 
-                className="snapshot-save-btn"
-                onClick={createSnapshot} 
-                disabled={!newSnapshotName.trim()}
+                className="tag-save-btn"
+                onClick={createTag} 
+                disabled={!newTagName.trim()}
               >
                 <Save size={16} />
-                Save
+                Tag
               </button>
             </div>
-            <div className="snapshots-list">
-              {snapshots.length === 0 ? (
+            <div className="tags-list">
+              {tags.length === 0 ? (
                 <div className="versions-empty">
-                  <div className="empty-icon">📸</div>
-                  <p>No snapshots yet</p>
-                  <span>Save important versions here</span>
+                  <div className="empty-icon">🏷️</div>
+                  <p>No tags yet</p>
+                  <span>Tag important versions here</span>
                 </div>
               ) : (
-                snapshots.map((snapshot, index) => (
-                  <div key={snapshot.id} className="snapshot-item">
-                    <div className="snapshot-main">
-                      <span className="snapshot-number">{snapshots.length - index}</span>
-                      <div className="snapshot-info">
-                        <div className="snapshot-name">{snapshot.name}</div>
-                        <div className="snapshot-meta">
-                          <span className="meta-item">{snapshot.createdBy}</span>
+                tags.map((tag, index) => (
+                  <div key={tag.id} className="tag-item">
+                    <div className="tag-main">
+                      <span className="tag-number">{tags.length - index}</span>
+                      <div className="tag-info">
+                        <div className="tag-name">🏷️ {tag.tagName}</div>
+                        <div className="tag-meta">
+                          <span className="meta-item">{tag.createdBy}</span>
                           <span className="meta-separator">•</span>
-                          <span className="meta-item">{new Date(snapshot.createdAt).toLocaleString('zh-CN', {
+                          <span className="meta-item">{new Date(tag.createdAt).toLocaleString('zh-CN', {
                             month: 'short',
                             day: 'numeric',
                             hour: '2-digit',
@@ -1025,12 +1033,12 @@ export default function Editor({ roomId, userName }: EditorProps) {
                       </div>
                     </div>
                     <button
-                      className="snapshot-restore-btn"
-                      onClick={() => restoreSnapshot(snapshot.id)}
-                      title="Restore to this version"
+                      className="tag-rollback-btn"
+                      onClick={() => rollbackToVersion(tag.versionId)}
+                      title="Rollback to this tagged version"
                     >
                       <RotateCcw size={14} />
-                      恢复
+                      回滚
                     </button>
                   </div>
                 ))
@@ -1051,7 +1059,7 @@ export default function Editor({ roomId, userName }: EditorProps) {
                 </div>
               ) : (
                 versions.map((version, index) => (
-                  <div key={version.id} className={`version-item ${version.isCurrent ? 'current' : ''}`}>
+                  <div key={version.id} className={`version-item ${version.isCurrent ? 'current' : ''} ${version.isSnapshot ? 'snapshot' : ''}`}>
                     <div className="version-main">
                       <span className="version-number">{versions.length - index}</span>
                       <div className="version-info">
@@ -1063,15 +1071,29 @@ export default function Editor({ roomId, userName }: EditorProps) {
                             minute: '2-digit'
                           })}
                           {version.isCurrent && <span className="current-badge">current</span>}
+                          {version.isSnapshot && <span className="snapshot-badge" title="完整快照">📸</span>}
+                          {/* 显示 Tags */}
+                          {version.tags && version.tags.length > 0 && (
+                            <span className="version-tags">
+                              {version.tags.map((tag: any) => (
+                                <span key={tag.id} className="version-tag" title={`Tag: ${tag.tagName}`}>
+                                  🏷️ {tag.tagName}
+                                </span>
+                              ))}
+                            </span>
+                          )}
                         </div>
-                        <div className="version-size">{(version.dataSize / 1024).toFixed(1)} KB</div>
+                        <div className="version-size">
+                          {(version.dataSize / 1024).toFixed(1)} KB
+                          {version.isSnapshot && <span className="snapshot-label">快照</span>}
+                        </div>
                       </div>
                     </div>
                     {!version.isCurrent && (
                       <button
                         className="version-rollback-btn"
                         onClick={() => rollbackToVersion(version.id)}
-                        title="Rollback to this version"
+                        title={version.isSnapshot ? "回滚到此快照版本" : "回滚到此版本"}
                       >
                         <RotateCcw size={14} />
                         回滚

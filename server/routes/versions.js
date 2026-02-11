@@ -16,7 +16,8 @@ router.get('/:roomName/history', async (req, res) => {
       versions: history.map(v => ({
         id: v.id,
         createdAt: v.created_at,
-        dataSize: v.data_size
+        dataSize: v.data_size,
+        isSnapshot: v.is_snapshot
       }))
     })
   } catch (error) {

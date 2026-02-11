@@ -96,6 +96,12 @@ const server = http.createServer((request, response) => {
     return
   }
 
+  // Tag API 路由
+  if (request.url.startsWith('/tags/')) {
+    handleTagsAPI(request, response)
+    return
+  }
+
   // 认证路由
   if (request.url === '/auth/google' && request.method === 'POST') {
     handleGoogleAuth(request, response)
@@ -108,8 +114,14 @@ const server = http.createServer((request, response) => {
     return
   }
 
-  // 图片上传路由
-  if (request.url === '/api/upload/image' && request.method === 'POST') {
+  // 获取图片上传URL（预签名）
+  if (request.url.startsWith('/api/upload/url') && request.method === 'GET') {
+    upload.generateUploadUrl(request, response)
+    return
+  }
+
+  // 图片上传路由（使用令牌）
+  if (request.url.startsWith('/api/upload/image') && request.method === 'POST') {
     upload.handleImageUpload(request, response)
     return
   }
@@ -146,6 +158,20 @@ async function handleVersionsAPI(request, response) {
       const history = await persistence.getVersionHistory(roomName, limit)
       const currentVersionId = await persistence.getCurrentVersion(roomName)
       
+      // 获取所有 tags，用于标记版本
+      const tags = await persistence.getTags(roomName)
+      const versionTagsMap = new Map()
+      tags.forEach(tag => {
+        if (!versionTagsMap.has(tag.version_id)) {
+          versionTagsMap.set(tag.version_id, [])
+        }
+        versionTagsMap.get(tag.version_id).push({
+          id: tag.id,
+          tagName: tag.tag_name,
+          createdBy: tag.created_by
+        })
+      })
+      
       response.writeHead(200, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify({
         roomName,
@@ -154,7 +180,9 @@ async function handleVersionsAPI(request, response) {
           id: v.id,
           createdAt: v.created_at,
           dataSize: v.data_size,
-          isCurrent: v.id === currentVersionId
+          isSnapshot: v.is_snapshot,
+          isCurrent: v.id === currentVersionId,
+          tags: versionTagsMap.get(v.id) || []
         }))
       }))
       return
@@ -320,6 +348,130 @@ async function handleVersionsAPI(request, response) {
     response.end(JSON.stringify({ error: 'Not found' }))
   } catch (err) {
     console.error('Versions API error:', err)
+    response.writeHead(500, { 'Content-Type': 'application/json' })
+    response.end(JSON.stringify({ error: err.message }))
+  }
+}
+
+// 处理 Tags API
+async function handleTagsAPI(request, response) {
+  const url = new URL(request.url, `http://${request.headers.host}`)
+  const pathParts = url.pathname.split('/')
+
+  if (pathParts.length < 3) {
+    response.writeHead(400, { 'Content-Type': 'application/json' })
+    response.end(JSON.stringify({ error: 'Invalid path' }))
+    return
+  }
+
+  const roomName = pathParts[2]
+  const action = pathParts[3] || ''
+
+  try {
+    // GET /tags/:roomName - 获取所有 tags
+    if (action === '' && request.method === 'GET') {
+      const tags = await persistence.getTags(roomName)
+
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({
+        roomName,
+        tags: tags.map(t => ({
+          id: t.id,
+          tagName: t.tag_name,
+          versionId: t.version_id,
+          createdBy: t.created_by,
+          createdAt: t.created_at,
+          versionCreatedAt: t.version_created_at
+        }))
+      }))
+      return
+    }
+
+    // POST /tags/:roomName - 创建 tag
+    if (action === '' && request.method === 'POST') {
+      let body = ''
+      request.on('data', chunk => body += chunk)
+      request.on('end', async () => {
+        try {
+          const data = JSON.parse(body)
+          const { tagName, versionId } = data
+
+          if (!tagName || !versionId) {
+            response.writeHead(400, { 'Content-Type': 'application/json' })
+            response.end(JSON.stringify({ error: 'tagName and versionId are required' }))
+            return
+          }
+
+          const createdBy = data.createdBy || 'system'
+          const tagId = await persistence.createTag(roomName, tagName, versionId, createdBy)
+
+          response.writeHead(201, { 'Content-Type': 'application/json' })
+          response.end(JSON.stringify({
+            message: 'Tag created successfully',
+            roomName,
+            tagId,
+            tagName,
+            versionId
+          }))
+        } catch (err) {
+          response.writeHead(500, { 'Content-Type': 'application/json' })
+          response.end(JSON.stringify({ error: err.message }))
+        }
+      })
+      return
+    }
+
+    // DELETE /tags/:roomName/:tagId - 删除 tag
+    if (action && request.method === 'DELETE') {
+      const tagId = parseInt(action)
+
+      if (isNaN(tagId)) {
+        response.writeHead(400, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ error: 'Invalid tag ID' }))
+        return
+      }
+
+      await persistence.deleteTag(roomName, tagId)
+
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({
+        message: 'Tag deleted successfully',
+        roomName,
+        tagId
+      }))
+      return
+    }
+
+    // GET /tags/:roomName/version/:versionId - 获取版本的 tags
+    if (action === 'version' && request.method === 'GET') {
+      const versionId = parseInt(pathParts[4])
+
+      if (isNaN(versionId)) {
+        response.writeHead(400, { 'Content-Type': 'application/json' })
+        response.end(JSON.stringify({ error: 'Invalid version ID' }))
+        return
+      }
+
+      const tags = await persistence.getTagsForVersion(roomName, versionId)
+
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({
+        roomName,
+        versionId,
+        tags: tags.map(t => ({
+          id: t.id,
+          tagName: t.tag_name,
+          createdBy: t.created_by,
+          createdAt: t.created_at
+        }))
+      }))
+      return
+    }
+
+    response.writeHead(404, { 'Content-Type': 'application/json' })
+    response.end(JSON.stringify({ error: 'Not found' }))
+  } catch (err) {
+    console.error('Tags API error:', err)
     response.writeHead(500, { 'Content-Type': 'application/json' })
     response.end(JSON.stringify({ error: err.message }))
   }

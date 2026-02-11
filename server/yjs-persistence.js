@@ -461,14 +461,15 @@ class PostgresPersistence {
   async getVersionHistory(roomName, limit = 50) {
     try {
       const result = await db.query(
-        `SELECT 
-          id, 
-          room_name, 
+        `SELECT
+          id,
+          room_name,
           created_at,
-          LENGTH(update_data) as data_size
-        FROM yjs_updates 
-        WHERE room_name = $1 
-        ORDER BY created_at DESC 
+          LENGTH(update_data) as data_size,
+          is_snapshot
+        FROM yjs_updates
+        WHERE room_name = $1
+        ORDER BY created_at DESC
         LIMIT $2`,
         [roomName, limit]
       )
@@ -640,32 +641,137 @@ class PostgresPersistence {
         'SELECT state_data, snapshot_name FROM document_snapshots WHERE id = $1 AND room_name = $2',
         [snapshotId, roomName]
       )
-      
+
       if (result.rows.length === 0) {
         throw new Error(`Snapshot ${snapshotId} not found for room ${roomName}`)
       }
-      
+
       const state = new Uint8Array(result.rows[0].state_data)
       const snapshotName = result.rows[0].snapshot_name
-      
+
       // Clear cache and apply snapshot
       this.clearDocumentCache(roomName)
-      
+
       // Store the snapshot as a new update (preserve history)
       await this.storeUpdate(roomName, state)
-      
+
       // Also create a new version entry to track this restore operation
       await db.query(
         `INSERT INTO document_versions (room_name, update_data, data_size, created_by, is_current)
          VALUES ($1, $2, $3, $4, true)`,
         [roomName, Buffer.from(state), state.length, createdBy]
       )
-      
+
       console.log(`Restored ${roomName} from snapshot ${snapshotId} (${snapshotName})`)
       return true
     } catch (err) {
       console.error(`Error restoring snapshot for ${roomName}:`, err)
       throw err
+    }
+  }
+
+  // ==================== Tag 系统 ====================
+
+  /**
+   * 创建 Tag（轻量级，只指向版本）
+   * @param {string} roomName - 房间名称
+   * @param {string} tagName - Tag 名称
+   * @param {number} versionId - 指向的版本 ID
+   * @param {string} createdBy - 创建者
+   */
+  async createTag(roomName, tagName, versionId, createdBy = 'system') {
+    try {
+      // 验证版本存在
+      const versionResult = await db.query(
+        'SELECT id FROM yjs_updates WHERE id = $1 AND room_name = $2',
+        [versionId, roomName]
+      )
+
+      if (versionResult.rows.length === 0) {
+        throw new Error(`Version ${versionId} not found for room ${roomName}`)
+      }
+
+      const result = await db.query(
+        `INSERT INTO document_tags (room_name, tag_name, version_id, created_by)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (room_name, tag_name) 
+         DO UPDATE SET version_id = $3, created_by = $4, created_at = CURRENT_TIMESTAMP
+         RETURNING id`,
+        [roomName, tagName, versionId, createdBy]
+      )
+
+      console.log(`Created tag '${tagName}' -> version ${versionId} for ${roomName}`)
+      return result.rows[0].id
+    } catch (err) {
+      console.error(`Error creating tag for ${roomName}:`, err)
+      throw err
+    }
+  }
+
+  /**
+   * 获取所有 Tags
+   * @param {string} roomName - 房间名称
+   */
+  async getTags(roomName) {
+    try {
+      const result = await db.query(
+        `SELECT t.id, t.tag_name, t.version_id, t.created_by, t.created_at,
+                v.created_at as version_created_at
+         FROM document_tags t
+         JOIN yjs_updates v ON t.version_id = v.id
+         WHERE t.room_name = $1
+         ORDER BY t.created_at DESC`,
+        [roomName]
+      )
+      return result.rows
+    } catch (err) {
+      console.error(`Error getting tags for ${roomName}:`, err)
+      return []
+    }
+  }
+
+  /**
+   * 删除 Tag
+   * @param {string} roomName - 房间名称
+   * @param {number} tagId - Tag ID
+   */
+  async deleteTag(roomName, tagId) {
+    try {
+      const result = await db.query(
+        'DELETE FROM document_tags WHERE id = $1 AND room_name = $2 RETURNING id',
+        [tagId, roomName]
+      )
+
+      if (result.rows.length === 0) {
+        throw new Error(`Tag ${tagId} not found for room ${roomName}`)
+      }
+
+      console.log(`Deleted tag ${tagId} for ${roomName}`)
+      return true
+    } catch (err) {
+      console.error(`Error deleting tag for ${roomName}:`, err)
+      throw err
+    }
+  }
+
+  /**
+   * 获取版本的所有 Tags
+   * @param {string} roomName - 房间名称
+   * @param {number} versionId - 版本 ID
+   */
+  async getTagsForVersion(roomName, versionId) {
+    try {
+      const result = await db.query(
+        `SELECT id, tag_name, created_by, created_at
+         FROM document_tags
+         WHERE room_name = $1 AND version_id = $2
+         ORDER BY created_at DESC`,
+        [roomName, versionId]
+      )
+      return result.rows
+    } catch (err) {
+      console.error(`Error getting tags for version ${versionId}:`, err)
+      return []
     }
   }
 }
