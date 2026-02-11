@@ -26,6 +26,7 @@ import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/atom-one-dark.css'
 import './Editor.css'
+import TableOfContents from './TableOfContents'
 
 interface EditorProps {
   roomId: string
@@ -414,6 +415,30 @@ export default function Editor({ roomId, userName }: EditorProps) {
           hljs.highlightElement(block as HTMLElement)
         }
       })
+
+      // 检查评论对应的文字是否还存在
+      const commentsMap = commentsMapRef.current
+      if (commentsMap) {
+        const commentsToDelete: string[] = []
+        commentsMap.forEach((value, key) => {
+          const comment = value as Comment
+          try {
+            // 尝试获取评论对应的文字
+            const currentText = editor.state.doc.textBetween(comment.from, comment.to)
+            // 如果文字已被删除或改变，删除评论
+            if (currentText !== comment.selectedText) {
+              commentsToDelete.push(key)
+            }
+          } catch (e) {
+            // 如果选区已超出文档范围，删除评论
+            commentsToDelete.push(key)
+          }
+        })
+        // 删除失效的评论
+        commentsToDelete.forEach((id) => {
+          commentsMap.delete(id)
+        })
+      }
     },
   }, [ydoc, roomId, userName])
 
@@ -472,6 +497,18 @@ export default function Editor({ roomId, userName }: EditorProps) {
   }, [])
 
   const deleteComment = useCallback((id: string) => {
+    const comment = commentsMapRef.current?.get(id) as Comment | undefined
+    const currentEditor = editorRef.current
+
+    // 移除文档中的高亮
+    if (comment && currentEditor) {
+      try {
+        currentEditor.chain().focus().setTextSelection({ from: comment.from, to: comment.to }).unsetHighlight().run()
+      } catch (e) {
+        // 如果选区已不存在，忽略错误
+      }
+    }
+
     commentsMapRef.current?.delete(id)
     if (activeCommentId === id) {
       setActiveCommentId(null)
@@ -579,8 +616,21 @@ export default function Editor({ roomId, userName }: EditorProps) {
     return <div className="editor-loading">Loading...</div>
   }
 
+  const handleTocItemClick = (id: string) => {
+    const element = document.getElementById(id)
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
+
   return (
     <div className="editor-wrapper">
+      <div className="toc-sidebar">
+        <TableOfContents 
+          editorContent={editor?.getHTML() || ''} 
+          onItemClick={handleTocItemClick}
+        />
+      </div>
       <div className="editor-main">
         <div className="toolbar">
           <div className="toolbar-group">
