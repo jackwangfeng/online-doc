@@ -13,6 +13,7 @@ const persistence = require('./yjs-persistence')
 const db = require('./db')
 const jwt = require('jsonwebtoken')
 const { OAuth2Client } = require('google-auth-library')
+const upload = require('./routes/upload')
 
 const host = process.env.HOST || 'localhost'
 const port = process.env.PORT || 3000
@@ -112,6 +113,19 @@ const server = http.createServer((request, response) => {
   // 文档管理路由
   if (request.url.startsWith('/api/documents')) {
     handleDocumentsAPI(request, response)
+    return
+  }
+
+  // 图片上传路由
+  if (request.url === '/api/upload/image' && request.method === 'POST') {
+    upload.handleImageUpload(request, response)
+    return
+  }
+
+  // 图片访问路由
+  if (request.url.startsWith('/uploads/images/')) {
+    const filename = request.url.split('/').pop()
+    upload.serveImage(request, response, filename)
     return
   }
 

@@ -447,6 +447,59 @@ export default function Editor({ roomId, userName }: EditorProps) {
     editorRef.current = editor
   }, [editor])
 
+  // 处理图片粘贴上传
+  useEffect(() => {
+    if (!editor) return
+
+    const handlePaste = async (event: ClipboardEvent) => {
+      const items = event.clipboardData?.items
+      if (!items) return
+
+      const imageItems = Array.from(items).filter(item => item.type.startsWith('image/'))
+      if (imageItems.length === 0) return
+
+      // 阻止默认粘贴行为
+      event.preventDefault()
+
+      for (const item of imageItems) {
+        const file = item.getAsFile()
+        if (!file) continue
+
+        try {
+          const formData = new FormData()
+          formData.append('image', file)
+
+          const response = await fetch('http://localhost:3000/api/upload/image', {
+            method: 'POST',
+            body: formData,
+          })
+
+          if (!response.ok) {
+            throw new Error('Upload failed')
+          }
+
+          const data = await response.json()
+          if (data.success && data.url) {
+            // 在光标位置插入图片
+            const imageUrl = `http://localhost:3000${data.url}`
+            editor.chain().focus().setImage({ src: imageUrl }).run()
+          }
+        } catch (error) {
+          console.error('Error uploading image:', error)
+          alert('图片上传失败，请重试')
+        }
+      }
+    }
+
+    // 监听粘贴事件
+    const editorElement = editor.view.dom
+    editorElement.addEventListener('paste', handlePaste)
+
+    return () => {
+      editorElement.removeEventListener('paste', handlePaste)
+    }
+  }, [editor])
+
   const startComment = useCallback(() => {
     const currentEditor = editorRef.current
     if (!currentEditor) return
