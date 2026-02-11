@@ -49,6 +49,7 @@ server/node_modules/
 server/dist/
 server/logs/
 server/*.log
+server/.env
 
 # Client specific
 client/node_modules/
