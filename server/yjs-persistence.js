@@ -5,10 +5,18 @@ const db = require('./db')
  * PostgreSQL-based Yjs persistence adapter
  * Stores document updates and can reconstruct the document state
  * Supports version history and rollback
+ * 
+ * 优化特性：
+ * 1. 防抖保存 - 用户停止输入后才保存
+ * 2. 版本合并 - 短时间内的更新合并成一个版本
+ * 3. 内容去重 - 内容无变化不保存新版本
  */
 class PostgresPersistence {
   constructor() {
     this.docs = new Map() // Cache for loaded documents
+    this.updateBuffers = new Map() // 防抖缓冲区: roomName -> { updates: [], timer: null, lastSaveTime: 0 }
+    this.DEBOUNCE_DELAY = 2000 // 防抖延迟: 2秒
+    this.MERGE_WINDOW = 5000 // 合并窗口: 5秒内合并为一个版本
   }
 
   /**
@@ -57,19 +65,134 @@ class PostgresPersistence {
     // Cache the document
     this.docs.set(roomName, ydoc)
 
-    // Set up persistence on update
-    ydoc.on('update', async (update) => {
-      await this.storeUpdate(roomName, update)
-      
-      // 如果有版本指针，更新后清除它（因为产生了新版本）
-      const currentVersionId = await this.getCurrentVersion(roomName)
-      if (currentVersionId) {
-        await this.clearCurrentVersion(roomName)
-        console.log(`Cleared version pointer for ${roomName} after new update`)
-      }
-    })
+    // 设置防抖保存
+    this.setupDebouncedPersistence(roomName, ydoc)
 
     return ydoc
+  }
+
+  /**
+   * 设置防抖保存机制
+   */
+  setupDebouncedPersistence(roomName, ydoc) {
+    // 初始化缓冲区
+    if (!this.updateBuffers.has(roomName)) {
+      this.updateBuffers.set(roomName, {
+        updates: [],
+        timer: null,
+        lastSaveTime: 0,
+        lastContent: null
+      })
+    }
+
+    const buffer = this.updateBuffers.get(roomName)
+
+    ydoc.on('update', async (update) => {
+      // 清除之前的定时器
+      if (buffer.timer) {
+        clearTimeout(buffer.timer)
+      }
+
+      // 累积更新
+      buffer.updates.push(update)
+
+      // 设置新的定时器
+      buffer.timer = setTimeout(async () => {
+        await this.flushUpdateBuffer(roomName, ydoc)
+      }, this.DEBOUNCE_DELAY)
+    })
+  }
+
+  /**
+   * 刷新更新缓冲区，保存到数据库
+   */
+  async flushUpdateBuffer(roomName, ydoc) {
+    const buffer = this.updateBuffers.get(roomName)
+    if (!buffer || buffer.updates.length === 0) return
+
+    // 合并所有更新
+    const mergedUpdate = Y.mergeUpdates(buffer.updates)
+    
+    // 检查内容是否有实质变化
+    const currentContent = this.extractContent(ydoc)
+    if (buffer.lastContent && currentContent === buffer.lastContent) {
+      console.log(`Content unchanged for ${roomName}, skipping save`)
+      buffer.updates = []
+      return
+    }
+
+    // 检查是否需要合并到上一个版本（时间窗口内）
+    const now = Date.now()
+    const timeSinceLastSave = now - buffer.lastSaveTime
+    
+    if (timeSinceLastSave < this.MERGE_WINDOW && buffer.lastSaveTime > 0) {
+      // 合并到上一个版本
+      await this.mergeWithLastUpdate(roomName, mergedUpdate)
+      console.log(`Merged update into last version for ${roomName}`)
+    } else {
+      // 创建新版本
+      await this.storeUpdate(roomName, mergedUpdate)
+      console.log(`Created new version for ${roomName}`)
+    }
+
+    // 更新缓冲区状态
+    buffer.lastContent = currentContent
+    buffer.lastSaveTime = now
+    buffer.updates = []
+
+    // 如果有版本指针，清除它（因为产生了新版本）
+    const currentVersionId = await this.getCurrentVersion(roomName)
+    if (currentVersionId) {
+      await this.clearCurrentVersion(roomName)
+      console.log(`Cleared version pointer for ${roomName} after new update`)
+    }
+  }
+
+  /**
+   * 提取文档内容用于比较
+   */
+  extractContent(ydoc) {
+    try {
+      const text = ydoc.getText('content')
+      return text ? text.toString() : ''
+    } catch (e) {
+      return ''
+    }
+  }
+
+  /**
+   * 合并更新到上一个版本
+   */
+  async mergeWithLastUpdate(roomName, newUpdate) {
+    try {
+      // 获取最后一个更新
+      const result = await db.query(
+        'SELECT id, update_data FROM yjs_updates WHERE room_name = $1 ORDER BY created_at DESC LIMIT 1',
+        [roomName]
+      )
+      
+      if (result.rows.length === 0) {
+        // 没有上一个版本，直接保存
+        await this.storeUpdate(roomName, newUpdate)
+        return
+      }
+
+      const lastId = result.rows[0].id
+      const lastUpdate = new Uint8Array(result.rows[0].update_data)
+      
+      // 合并更新
+      const mergedUpdate = Y.mergeUpdates([lastUpdate, newUpdate])
+      
+      // 更新数据库中的记录
+      await db.query(
+        'UPDATE yjs_updates SET update_data = $1 WHERE id = $2',
+        [Buffer.from(mergedUpdate), lastId]
+      )
+    } catch (err) {
+      console.error(`Error merging update for ${roomName}:`, err)
+      // 失败时直接保存为新版本
+      await this.storeUpdate(roomName, newUpdate)
+    }
   }
 
   /**
@@ -164,6 +287,7 @@ class PostgresPersistence {
     try {
       await db.query('DELETE FROM yjs_updates WHERE room_name = $1', [roomName])
       this.docs.delete(roomName)
+      this.updateBuffers.delete(roomName)
     } catch (err) {
       console.error(`Error clearing document ${roomName}:`, err)
     }
@@ -181,6 +305,14 @@ class PostgresPersistence {
         ydoc.off('update')
         this.docs.delete(roomName)
         console.log(`Cleared cache for room ${roomName}`)
+      }
+      // 清除缓冲区
+      if (this.updateBuffers.has(roomName)) {
+        const buffer = this.updateBuffers.get(roomName)
+        if (buffer.timer) {
+          clearTimeout(buffer.timer)
+        }
+        this.updateBuffers.delete(roomName)
       }
     } catch (err) {
       console.error(`Error clearing document cache ${roomName}:`, err)

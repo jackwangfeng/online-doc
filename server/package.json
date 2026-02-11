@@ -4,7 +4,10 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo 'Run individual tests from tests/' directory",
+    "test:unit": "node tests/unit/test-version-optimization.js",
+    "test:integration": "node tests/integration/test-version-integration.js",
+    "test:version": "node tests/integration/test-version-integration.js"
   },
   "keywords": [],
   "author": "",

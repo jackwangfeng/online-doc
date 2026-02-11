@@ -27,41 +27,24 @@ const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID)
 const customPersistence = {
   provider: persistence,
   bindState: async (docName, ydoc) => {
-    // 检查是否有版本指针（回滚后设置）
-    const currentVersionId = await persistence.getCurrentVersion(docName)
+    // 使用 yjs-persistence 中的防抖保存机制
+    // 这会加载文档并设置防抖监听器
+    const persistedYdoc = await persistence.getYDoc(docName)
     
-    let updates
-    if (currentVersionId) {
-      // 回滚模式：只加载到指定版本
-      updates = await persistence.getUpdatesUntilVersion(docName, currentVersionId)
-      console.log(`Loading ${updates.length} updates for room: ${docName} (rolled back to version ${currentVersionId})`)
-    } else {
-      // 正常模式：加载所有更新
-      updates = await persistence.getUpdates(docName)
-      console.log(`Loading ${updates.length} updates for room: ${docName}`)
+    // 将加载的状态同步到 y-websocket 的 ydoc
+    const state = Y.encodeStateAsUpdate(persistedYdoc)
+    if (state.length > 0) {
+      Y.applyUpdate(ydoc, state)
     }
     
-    if (updates.length > 0) {
-      updates.forEach(update => {
-        try {
-          Y.applyUpdate(ydoc, update)
-        } catch (err) {
-          console.error(`Error applying update for ${docName}:`, err)
-        }
-      })
-    }
-    
-    // 监听更新并保存到数据库
-    ydoc.on('update', async (update, origin) => {
-      await persistence.storeUpdate(docName, Buffer.from(update))
-      
-      // 如果有版本指针，更新后清除它
-      const versionId = await persistence.getCurrentVersion(docName)
-      if (versionId) {
-        await persistence.clearCurrentVersion(docName)
-        console.log(`Cleared version pointer for ${docName} after new update`)
-      }
+    // 设置从 y-websocket ydoc 到持久化 ydoc 的同步
+    // 这样用户的编辑会先进入 y-websocket 的 ydoc，然后同步到持久化层
+    ydoc.on('update', (update, origin) => {
+      // 将更新应用到持久化 ydoc，触发防抖保存
+      Y.applyUpdate(persistedYdoc, update)
     })
+    
+    console.log(`Bound state for room: ${docName} with debounced persistence`)
   },
   writeState: async (docName, ydoc) => {
     console.log(`Persisting document: ${docName}`)

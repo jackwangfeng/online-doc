@@ -28,6 +28,7 @@ import 'highlight.js/styles/atom-one-dark.css'
 import './Editor.css'
 import TableOfContents from './TableOfContents'
 import { Previewer } from 'pagedjs'
+import FloatingComments from './FloatingComments'
 
 interface EditorProps {
   roomId: string
@@ -949,6 +950,23 @@ export default function Editor({ roomId, userName }: EditorProps) {
         </div>
       </div>
 
+      {/* 评论侧边栏 */}
+      {!showVersionHistory && !isPrintPreview && (
+        <FloatingComments
+          comments={comments}
+          activeCommentId={activeCommentId}
+          editor={editor}
+          onDeleteComment={deleteComment}
+          onResolveComment={resolveComment}
+          onCommentClick={jumpToComment}
+          pendingComment={pendingComment}
+          newCommentText={newCommentText}
+          onNewCommentTextChange={setNewCommentText}
+          onSubmitComment={submitComment}
+          onCancelComment={cancelComment}
+        />
+      )}
+
       {showVersionHistory ? (
         <div className="versions-sidebar">
           <div className="versions-header">
@@ -1065,103 +1083,7 @@ export default function Editor({ roomId, userName }: EditorProps) {
             </div>
           </div>
         </div>
-      ) : (
-        <div className="comments-sidebar">
-          <div className="comments-header">
-            <h3>Comments ({comments.length})</h3>
-          </div>
-
-        <div className="comments-list">
-          {/* 待评论区域 */}
-          {pendingComment && (
-            <div className="comment-item pending">
-              <div className="comment-selected-text">
-                "{pendingComment.selectedText.length > 50 ? pendingComment.selectedText.slice(0, 50) + '...' : pendingComment.selectedText}"
-              </div>
-              <div className="comment-status">Writing comment...</div>
-              <textarea
-                className="comments-input"
-                placeholder="Write your comment..."
-                value={newCommentText}
-                onChange={(e) => setNewCommentText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    submitComment()
-                  }
-                }}
-                rows={3}
-                autoFocus
-              />
-              <div className="comment-actions">
-                <button
-                  className="comment-action-btn submit"
-                  onClick={submitComment}
-                  disabled={!newCommentText.trim()}
-                >
-                  <Check size={14} />
-                  Submit
-                </button>
-                <button
-                  className="comment-action-btn cancel"
-                  onClick={cancelComment}
-                >
-                  <X size={14} />
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-
-          {comments.length === 0 && !pendingComment ? (
-            <div className="comments-empty">
-              <MessageSquare size={48} className="comments-empty-icon" />
-              <p>No comments yet</p>
-              <span>Select text and click the comment button to add one</span>
-            </div>
-          ) : (
-            comments.map(comment => (
-              <div
-                key={comment.id}
-                className={`comment-item ${comment.resolved ? 'resolved' : ''} ${activeCommentId === comment.id ? 'active' : ''}`}
-                onClick={() => jumpToComment(comment)}
-              >
-                <div className="comment-selected-text">
-                  "{comment.selectedText.length > 50 ? comment.selectedText.slice(0, 50) + '...' : comment.selectedText}"
-                </div>
-                <div className="comment-header">
-                  <span className="comment-author">{comment.author}</span>
-                  <span className="comment-time">
-                    {new Date(comment.createdAt).toLocaleString()}
-                  </span>
-                </div>
-                <p className="comment-content">{comment.content}</p>
-                <div className="comment-actions">
-                  <button
-                    className="comment-action-btn resolve"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      resolveComment(comment.id)
-                    }}
-                  >
-                    {comment.resolved ? 'Unresolve' : 'Resolve'}
-                  </button>
-                  <button
-                    className="comment-action-btn delete"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      deleteComment(comment.id)
-                    }}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-      )}
+      ) : null}
     </div>
   )
 }
