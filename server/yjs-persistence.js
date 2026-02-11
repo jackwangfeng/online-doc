@@ -32,17 +32,10 @@ class PostgresPersistence {
       return this.docs.get(roomName)
     }
 
-    // 检查是否有当前版本指针（回滚后设置）
-    const currentVersionId = await this.getCurrentVersion(roomName)
+    // 使用统一加载逻辑：快照 + 增量（始终加载最新版本）
+    const ydoc = await this.loadDocumentWithSnapshot(roomName, null)
     
-    // 使用统一加载逻辑：快照 + 增量
-    const ydoc = await this.loadDocumentWithSnapshot(roomName, currentVersionId)
-    
-    if (currentVersionId) {
-      console.log(`Loaded document ${roomName} at version ${currentVersionId}`)
-    } else {
-      console.log(`Loaded latest document ${roomName}`)
-    }
+    console.log(`Loaded latest document ${roomName}`)
 
     // Cache the document
     this.docs.set(roomName, ydoc)
@@ -514,21 +507,26 @@ class PostgresPersistence {
   }
 
   /**
-   * Rollback to a specific version by ID
+   * Rollback to a specific version by ID (硬回滚)
    * 
-   * 业界标准方案（腾讯文档/Google文档模式）：
+   * 方案：创建新版本副本，而不是设置指针
    * 
    * 原理：
-   * 1. 记录当前激活的版本 ID（current_version_id）
-   * 2. 回滚时更新 current_version_id 指向目标版本
-   * 3. 所有历史版本保留，可随时查看和恢复
-   * 4. 继续编辑时，基于回滚后的版本创建新更新
+   * 1. 加载目标版本的内容
+   * 2. 创建新版本，内容 = 目标版本的内容
+   * 3. 所有历史版本保留
+   * 4. 用户基于新版本继续编辑
    * 
    * 效果：
    * - 时间线：V1 → V2 → V3 → V4 → V5
-   * - 回滚到 V3：current_version = V3
-   * - 历史仍显示 V1-V5，但当前文档内容是 V3
-   * - 继续编辑：V3 → V6（新版本）
+   * - 回滚到 V3：创建 V6，内容 = V3
+   * - 时间线：V1 → V2 → V3 → V4 → V5 → V6
+   * - 继续编辑：基于 V6 创建 V7
+   * 
+   * 优势：
+   * - 历史完整保留
+   * - 协作场景清晰（线性历史）
+   * - 无需版本指针机制
    */
   async rollbackToVersion(roomName, versionId, createdBy = 'system') {
     try {
@@ -542,25 +540,33 @@ class PostgresPersistence {
         throw new Error(`Version ${versionId} not found for room ${roomName}`)
       }
       
-      // Step 2: 更新当前版本指针
-      await db.query(
-        `INSERT INTO document_current_version (room_name, current_version_id, updated_at)
-         VALUES ($1, $2, CURRENT_TIMESTAMP)
-         ON CONFLICT (room_name) 
-         DO UPDATE SET current_version_id = $2, updated_at = CURRENT_TIMESTAMP`,
-        [roomName, versionId]
+      // Step 2: 加载目标版本的内容
+      console.log(`Loading target version ${versionId} for rollback...`)
+      const targetYdoc = await this.loadDocumentWithSnapshot(roomName, versionId)
+      
+      // Step 3: 创建新版本（副本）
+      const snapshot = Y.encodeStateAsUpdate(targetYdoc)
+      const insertResult = await db.query(
+        'INSERT INTO yjs_updates (room_name, update_data, is_snapshot) VALUES ($1, $2, TRUE) RETURNING id',
+        [roomName, Buffer.from(snapshot)]
       )
       
-      // Step 3: 清除内存缓存，强制重新加载
+      const newVersionId = insertResult.rows[0].id
+      
+      // Step 4: 清除版本指针（回到正常模式）
+      await this.clearCurrentVersion(roomName)
+      
+      // Step 5: 清除内存缓存，强制重新加载
       this.clearDocumentCache(roomName)
       
-      console.log(`Rolled back ${roomName} to version ${versionId}`)
+      console.log(`Rolled back ${roomName} to version ${versionId}, created new version ${newVersionId}`)
       
       return {
         success: true,
-        currentVersionId: versionId,
+        newVersionId: newVersionId,
+        targetVersionId: versionId,
         requiresReconnect: true,
-        message: 'Rollback completed. The document has been restored to the selected version.'
+        message: `Rollback completed. Created new version ${newVersionId} based on version ${versionId}.`
       }
     } catch (err) {
       console.error(`Error rolling back ${roomName} to version ${versionId}:`, err)
